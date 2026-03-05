@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
@@ -15,9 +18,6 @@ from app.services import allegro_client, supabase_client, token_manager
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# In-memory PKCE state store (process-scoped; fine for single-instance Railway deploy)
-_pending_states: dict[str, str] = {}
-
 ALLEGRO_SCOPES = " ".join([
     "allegro:api:bids",
     "allegro:api:sale:offers:read",
@@ -25,12 +25,36 @@ ALLEGRO_SCOPES = " ".join([
     "allegro:api:orders:read",
 ])
 
+_STATE_TTL = 600  # 10 minut
+
+
+def _sign_state(nonce: str) -> str:
+    """Return 'nonce.timestamp.hmac' — verifiable without shared memory."""
+    ts = str(int(time.time()))
+    msg = f"{nonce}.{ts}".encode()
+    sig = hmac.new(settings.encryption_key.encode(), msg, hashlib.sha256).hexdigest()[:16]
+    return f"{nonce}.{ts}.{sig}"
+
+
+def _verify_state(state: str) -> bool:
+    parts = state.split(".")
+    if len(parts) != 3:
+        return False
+    nonce, ts, sig = parts
+    try:
+        if time.time() - int(ts) > _STATE_TTL:
+            return False
+    except ValueError:
+        return False
+    msg = f"{nonce}.{ts}".encode()
+    expected = hmac.new(settings.encryption_key.encode(), msg, hashlib.sha256).hexdigest()[:16]
+    return hmac.compare_digest(sig, expected)
+
 
 @router.get("/login")
 async def login():
     """Redirect user to Allegro OAuth2 authorisation page."""
-    state = secrets.token_urlsafe(32)
-    _pending_states[state] = state  # store for CSRF validation
+    state = _sign_state(secrets.token_urlsafe(16))
 
     params = {
         "response_type": "code",
@@ -49,9 +73,8 @@ async def callback(
     state: str = Query(...),
 ):
     """Handle Allegro OAuth2 callback, exchange code for tokens, store encrypted."""
-    if state not in _pending_states:
+    if not _verify_state(state):
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-    _pending_states.pop(state)
 
     try:
         token_data = await allegro_client.exchange_code(code)
