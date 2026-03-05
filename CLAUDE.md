@@ -121,10 +121,29 @@ RLS włączone. Backend używa `supabase_service_key` (omija RLS).
 
 ---
 
+## Status deploymentu
+
+| Serwis | URL | Status |
+|---|---|---|
+| Frontend | https://lastbid.pl | ✓ działa |
+| Backend | https://snip-back-production.up.railway.app | ✓ działa |
+| Supabase | kwvqkwiqsyflyafltnpj.supabase.co | ✓ działa |
+
+### Zweryfikowane działanie
+- ✓ `/health` — NTP sync, scheduler, Supabase połączenie
+- ✓ `/auth/login` + `/auth/callback` — OAuth2 Allegro działa end-to-end
+- ✓ HMAC-signed state (zastąpił in-memory `_pending_states`) — multi-instance safe
+- ✓ Supabase `service_role` key ustawiony poprawnie w Railway
+
+### Ważne szczegóły konfiguracji
+- `SUPABASE_SERVICE_KEY` musi być kluczem `service_role` (nie `anon`) — inaczej RLS blokuje zapis
+- `ALLEGRO_REDIRECT_URI` musi być ustawiona w Railway Variables (nie ma defaultu)
+- Railway Variables mogą nie być propagowane przy pierwszym ustawieniu — delete + re-add rozwiązuje problem
+
 ## Znane braki / TODO
 
+- [ ] Callback zwraca JSON bezpośrednio — docelowo powinien przekierowywać na frontend z user_id
 - [ ] Brak autentykacji endpointów API (każdy z user_id może działać)
-- [ ] `_pending_states` nie czyści się — potencjalny memory leak
 - [ ] `_check_win` w engine.py — logika wygranej do weryfikacji z real Allegro
 - [ ] Brak rate limitingu i limitu snipe'ów na usera
 - [ ] Integracja Stripe (plany basic/unlimited)
