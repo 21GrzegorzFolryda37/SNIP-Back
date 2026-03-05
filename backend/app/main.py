@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def startup():
-    logger.info("ALLEGRO_REDIRECT_URI = %s", settings.allegro_redirect_uri)
+    import os
+    logger.info("ALLEGRO_REDIRECT_URI (settings) = %s", settings.allegro_redirect_uri)
+    logger.info("ALLEGRO_REDIRECT_URI (os.environ) = %s", os.environ.get("ALLEGRO_REDIRECT_URI", "NOT SET"))
     logger.info("ENVIRONMENT = %s", settings.environment)
 
     # NTP sync before anything else
