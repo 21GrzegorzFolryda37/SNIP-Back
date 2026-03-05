@@ -123,7 +123,9 @@ async def exchange_code(code: str) -> dict[str, Any]:
         "redirect_uri": settings.allegro_redirect_uri,
     }
     async with session.post(url, data=data, auth=_client_auth()) as resp:
-        resp.raise_for_status()
+        if not resp.ok:
+            body = await resp.text()
+            raise Exception(f"{resp.status} {resp.reason} — {body}")
         return await resp.json()
 
 
