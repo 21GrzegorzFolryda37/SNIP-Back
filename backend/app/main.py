@@ -44,9 +44,11 @@ logger = logging.getLogger(__name__)
 @app.on_event("startup")
 async def startup():
     import os
+    # Log all env var NAMES (not values) to see what Railway passes
+    safe_keys = [k for k in os.environ if "ALLEGRO" in k or "SUPABASE" in k or "ENVIRONMENT" in k or "FRONTEND" in k]
+    logger.info("Visible env vars: %s", safe_keys)
     logger.info("ALLEGRO_REDIRECT_URI (settings) = %s", settings.allegro_redirect_uri)
-    logger.info("ALLEGRO_REDIRECT_URI (os.environ) = %s", os.environ.get("ALLEGRO_REDIRECT_URI", "NOT SET"))
-    logger.info("ENVIRONMENT = %s", settings.environment)
+    logger.info("ALLEGRO_REDIRECT_URI (os.environ) = %s", os.environ.get("ALLEGRO_REDIRECT_URI", "NOT_IN_ENVIRON"))
 
     # NTP sync before anything else
     await timing.sync_ntp_async()
