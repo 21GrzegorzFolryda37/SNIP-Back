@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # Allegro
     allegro_client_id: str
     allegro_client_secret: str
-    allegro_redirect_uri: str = "http://localhost:8000/callback"
+    allegro_redirect_uri: str
     allegro_api_url: str = "https://api.allegro.pl"
     allegro_auth_url: str = "https://allegro.pl/auth/oauth"
 
