@@ -122,6 +122,8 @@ async def exchange_code(code: str) -> dict[str, Any]:
         "code": code,
         "redirect_uri": settings.allegro_redirect_uri,
     }
+    logger.info("exchange_code: url=%s redirect_uri=%s client_id=%s code_len=%d",
+                url, settings.allegro_redirect_uri, settings.allegro_client_id, len(code))
     async with session.post(url, data=data, auth=_client_auth()) as resp:
         if not resp.ok:
             body = await resp.text()
