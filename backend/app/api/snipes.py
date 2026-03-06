@@ -15,6 +15,11 @@ router = APIRouter(prefix="/snipes", tags=["snipes"])
 
 def _extract_offer_id(url: str) -> str:
     """Extract numeric offer ID from an Allegro URL."""
+    # Try ?offerId=... query param first (produkt URLs)
+    qs_match = re.search(r"[?&]offerId=(\d+)", url)
+    if qs_match:
+        return qs_match.group(1)
+    # Fall back to trailing numeric ID in path (standard oferta URLs)
     match = re.search(r"-(\d+)$", url.rstrip("/").split("?")[0])
     if not match:
         raise ValueError(f"Cannot extract offer ID from URL: {url}")
