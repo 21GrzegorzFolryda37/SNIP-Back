@@ -121,6 +121,7 @@ async def exchange_code(code: str) -> dict[str, Any]:
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": settings.allegro_redirect_uri,
+        "client_id": settings.allegro_client_id,
     }
     logger.info("exchange_code: url=%s redirect_uri=%s client_id=%s code_len=%d",
                 url, settings.allegro_redirect_uri, settings.allegro_client_id, len(code))

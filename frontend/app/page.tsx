@@ -58,15 +58,22 @@ function HealthTab() {
     if (!API) return
     setLoading(true)
     setError('')
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
     try {
-      const res = await fetch(`${API}/health`, { cache: 'no-store' })
+      const res = await fetch(`${API}/health`, { cache: 'no-store', signal: controller.signal })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setData(await res.json())
       setLastChecked(new Date())
-    } catch (e) {
-      setError(`Nie można połączyć: ${e}`)
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        setError('Nie można połączyć: timeout (>8s)')
+      } else {
+        setError(`Nie można połączyć: ${e}`)
+      }
       setData(null)
     } finally {
+      clearTimeout(timeout)
       setLoading(false)
     }
   }, [])
