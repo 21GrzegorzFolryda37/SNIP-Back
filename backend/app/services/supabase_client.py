@@ -42,12 +42,16 @@ async def upsert_user(
     }
     if email is not None:
         data["email"] = email
-    result = (
-        db.table("users")
-        .upsert(data, on_conflict="allegro_user_id")
-        .execute()
-    )
-    return result.data[0]
+    try:
+        result = (
+            db.table("users")
+            .upsert(data, on_conflict="allegro_user_id")
+            .execute()
+        )
+        return result.data[0]
+    except Exception as exc:
+        logger.error("upsert_user failed: %s | data keys: %s", exc, list(data.keys()))
+        raise
 
 
 async def get_user_by_allegro_id(allegro_user_id: str) -> Optional[dict[str, Any]]:
