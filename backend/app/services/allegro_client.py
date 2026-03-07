@@ -84,15 +84,24 @@ async def _request(
 
 async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url: Optional[str] = None) -> dict[str, Any]:
     """Fetch offer details — try API endpoints, then fall back to page scraping."""
-    # Try 1: GET /offers/{id}
+    # Try 1: GET /offers/listing?offer.id={id}  (public marketplace search)
     try:
-        result = await _request("GET", f"{settings.allegro_api_url}/offers/{offer_id}", access_token=access_token)
-        logger.info("GET /offers/%s keys: %s", offer_id, list(result.keys()))
-        return result
+        result = await _request(
+            "GET", f"{settings.allegro_api_url}/offers/listing",
+            access_token=access_token,
+            params={"offer.id": offer_id, "limit": 1},
+        )
+        items = result.get("items", {}).get("regular", [])
+        if items:
+            logger.info("GET /offers/listing offer.id=%s → found, keys: %s", offer_id, list(items[0].keys()))
+            return items[0]
+        logger.warning("GET /offers/listing offer.id=%s → 200 but no items", offer_id)
     except AllegroAccessDeniedError as e1:
-        logger.warning("GET /offers/%s access denied, trying bidding endpoint: %s", offer_id, e1)
+        logger.warning("GET /offers/listing access denied (no marketplace approval): %s", e1)
+    except AllegroNotFoundError:
+        raise
     except Exception as e1:
-        logger.warning("GET /offers/%s failed: %s", offer_id, e1)
+        logger.warning("GET /offers/listing failed: %s", e1)
 
     # Try 2: GET /bidding/offers/{id}
     try:
@@ -153,22 +162,30 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
     if nd_match:
         try:
             data = _json.loads(nd_match.group(1))
-            ending_at = _find_key(data, "endingAt")
+            # Allegro uses different field names across versions
+            ending_at = (
+                _find_key(data, "endingAt")
+                or _find_key(data, "endingTime")
+                or _find_key(data, "endTime")
+            )
             title = title or _find_key(data, "name")
             price = price or str(_find_key(data, "amount") or "")
+            logger.info("_scrape_offer_page: __NEXT_DATA__ parsed, ending_at=%r", ending_at)
         except Exception as exc:
             logger.warning("_scrape_offer_page: __NEXT_DATA__ parse failed: %s", exc)
+    else:
+        logger.warning("_scrape_offer_page: __NEXT_DATA__ not found in HTML (len=%d)", len(html))
 
-    # Fallback: raw regex
+    # Fallback: raw regex — covers all known field name variants
     if not ending_at:
-        m = _re.search(r'"endingAt"\s*:\s*"([^"]+)"', html)
+        m = _re.search(r'"(?:endingAt|endingTime|endTime)"\s*:\s*"([^"]+)"', html)
         ending_at = m.group(1) if m else None
     if not title:
         m = _re.search(r'"name"\s*:\s*"([^"\\]{3,})"', html)
         title = m.group(1) if m else None
 
     if not ending_at:
-        logger.warning("_scrape_offer_page: endingAt not found on page for %s", offer_id)
+        logger.warning("_scrape_offer_page: end time not found on page for %s (html_len=%d)", offer_id, len(html))
         return None
 
     logger.info("_scrape_offer_page: offer %s endingAt=%s title=%r", offer_id, ending_at, title)

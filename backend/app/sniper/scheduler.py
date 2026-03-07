@@ -62,6 +62,7 @@ async def _poll_snipes() -> None:
                     end_time_str = (
                         offer.get("publication", {}).get("endingAt")
                         or offer.get("endingAt")
+                        or offer.get("endingTime")
                         or offer.get("endTime")
                     )
                     if end_time_str:

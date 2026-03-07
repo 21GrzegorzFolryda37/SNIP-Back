@@ -71,6 +71,7 @@ class SniperEngine:
         end_time_str = (
             offer.get("publication", {}).get("endingAt")
             or offer.get("endingAt")
+            or offer.get("endingTime")
             or offer.get("endTime")
             or snipe.get("offer_end_time")
         )
