@@ -138,31 +138,46 @@ async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url
 async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> Optional[dict[str, Any]]:
     """Scrape auction end time and basic details from the Allegro offer page.
 
-    Uses curl_cffi to impersonate Chrome TLS fingerprint — bypasses Cloudflare bot protection.
+    Uses ScraperAPI (residential proxy) when SCRAPER_API_KEY is configured.
+    Falls back to curl_cffi Chrome TLS impersonation otherwise.
     """
     import json as _json
     import re as _re
-    from curl_cffi.requests import AsyncSession
+    from urllib.parse import urlencode
 
-    url = offer_url or f"https://allegro.pl/oferta/{offer_id}"
+    target_url = offer_url or f"https://allegro.pl/oferta/{offer_id}"
+    status = 0
+    html = ""
+
     try:
-        async with AsyncSession(impersonate="chrome120") as s:
-            resp = await s.get(url, timeout=15, allow_redirects=True)
-        if resp.status_code == 404:
-            raise AllegroNotFoundError(f"Offer {offer_id} not found (scrape 404)")
-        if resp.status_code == 403:
-            global _scraping_blocked
-            logger.warning("_scrape_offer_page: %s → 403 (IP blocked by Cloudflare) — disabling scraping for this session", url)
-            _scraping_blocked = True
-            return None
-        if resp.status_code != 200:
-            logger.warning("_scrape_offer_page: %s → %d", url, resp.status_code)
-            return None
-        html = resp.text
+        if settings.scraper_api_key:
+            proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': target_url})}"
+            session = get_session()
+            async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                status = resp.status
+                if status == 200:
+                    html = await resp.text()
+        else:
+            from curl_cffi.requests import AsyncSession
+            async with AsyncSession(impersonate="chrome120") as s:
+                resp = await s.get(target_url, timeout=15, allow_redirects=True)
+            status = resp.status_code
+            html = resp.text if status == 200 else ""
     except AllegroNotFoundError:
         raise
     except Exception as exc:
-        logger.warning("_scrape_offer_page: fetch failed for %s: %s", url, exc)
+        logger.warning("_scrape_offer_page: fetch failed for %s: %s", target_url, exc)
+        return None
+
+    if status == 404:
+        raise AllegroNotFoundError(f"Offer {offer_id} not found (scrape 404)")
+    if status == 403 and not settings.scraper_api_key:
+        global _scraping_blocked
+        logger.warning("_scrape_offer_page: 403 (Cloudflare IP block) — disabling for this session. Set SCRAPER_API_KEY to fix.")
+        _scraping_blocked = True
+        return None
+    if status != 200:
+        logger.warning("_scrape_offer_page: %s → %d", target_url, status)
         return None
 
     ending_at: Optional[str] = None

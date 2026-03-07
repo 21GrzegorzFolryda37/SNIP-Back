@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Sniper
     snipe_offset_ms: int = 100
 
+    # ScraperAPI (residential proxy for allegro.pl scraping)
+    scraper_api_key: str = ""
+
     def model_post_init(self, __context) -> None:
         if not self.encryption_key:
             from cryptography.fernet import Fernet
