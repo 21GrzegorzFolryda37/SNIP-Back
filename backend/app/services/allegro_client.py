@@ -83,14 +83,14 @@ async def _request(
 
 
 async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url: Optional[str] = None) -> dict[str, Any]:
-    """Fetch offer details — try multiple endpoints."""
+    """Fetch offer details — try API endpoints, then fall back to page scraping."""
     # Try 1: GET /offers/{id}
     try:
         result = await _request("GET", f"{settings.allegro_api_url}/offers/{offer_id}", access_token=access_token)
         logger.info("GET /offers/%s keys: %s", offer_id, list(result.keys()))
         return result
     except AllegroAccessDeniedError as e1:
-        logger.warning("GET /offers/%s access denied (marketplace approval needed), trying bidding endpoint: %s", offer_id, e1)
+        logger.warning("GET /offers/%s access denied, trying bidding endpoint: %s", offer_id, e1)
     except Exception as e1:
         logger.warning("GET /offers/%s failed: %s", offer_id, e1)
 
@@ -102,15 +102,106 @@ async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url
     except AllegroNotFoundError as e2:
         body = str(e2).lower()
         if "unavailable" in body or "feature" in body:
-            raise AllegroAccessDeniedError(
-                f"GET /bidding/offers/{offer_id} feature unavailable (missing allegro:api:bidding scope?)"
-            ) from e2
-        raise AllegroNotFoundError(f"Offer {offer_id} not found") from e2
+            logger.warning("GET /bidding/offers/%s feature unavailable, trying page scrape", offer_id)
+        else:
+            raise AllegroNotFoundError(f"Offer {offer_id} not found") from e2
     except AllegroAccessDeniedError:
-        raise
+        logger.warning("GET /bidding/offers/%s access denied, trying page scrape", offer_id)
     except Exception as e2:
-        logger.warning("GET /bidding/offers/%s failed: %s", offer_id, e2)
-        raise AllegroAccessDeniedError(f"Could not fetch offer {offer_id} from any endpoint") from e2
+        logger.warning("GET /bidding/offers/%s failed: %s — trying page scrape", offer_id, e2)
+
+    # Try 3: scrape the offer page (no API approval needed)
+    logger.info("Scraping offer page for %s", offer_id)
+    scraped = await _scrape_offer_page(offer_id, offer_url)
+    if scraped:
+        return scraped
+
+    raise AllegroAccessDeniedError(f"Could not fetch offer {offer_id} from any source")
+
+
+async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Scrape auction end time and basic details from the Allegro offer page."""
+    import json as _json
+    import re as _re
+
+    url = offer_url or f"https://allegro.pl/oferta/{offer_id}"
+    session = get_session()
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    try:
+        async with session.get(
+            url, headers=headers, allow_redirects=True,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status == 404:
+                raise AllegroNotFoundError(f"Offer {offer_id} not found (scrape 404)")
+            if resp.status != 200:
+                logger.warning("_scrape_offer_page: %s → %d", url, resp.status)
+                return None
+            html = await resp.text()
+    except AllegroNotFoundError:
+        raise
+    except Exception as exc:
+        logger.warning("_scrape_offer_page: fetch failed for %s: %s", url, exc)
+        return None
+
+    ending_at: Optional[str] = None
+    title: Optional[str] = None
+    price: Optional[str] = None
+
+    # Primary: parse __NEXT_DATA__ JSON (Next.js SSR)
+    nd_match = _re.search(r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>', html)
+    if nd_match:
+        try:
+            data = _json.loads(nd_match.group(1))
+            ending_at = _find_key(data, "endingAt")
+            title = title or _find_key(data, "name")
+            price = price or str(_find_key(data, "amount") or "")
+        except Exception as exc:
+            logger.warning("_scrape_offer_page: __NEXT_DATA__ parse failed: %s", exc)
+
+    # Fallback: raw regex
+    if not ending_at:
+        m = _re.search(r'"endingAt"\s*:\s*"([^"]+)"', html)
+        ending_at = m.group(1) if m else None
+    if not title:
+        m = _re.search(r'"name"\s*:\s*"([^"\\]{3,})"', html)
+        title = m.group(1) if m else None
+
+    if not ending_at:
+        logger.warning("_scrape_offer_page: endingAt not found on page for %s", offer_id)
+        return None
+
+    logger.info("_scrape_offer_page: offer %s endingAt=%s title=%r", offer_id, ending_at, title)
+    return {
+        "endingAt": ending_at,
+        "name": title,
+        "sellingMode": {"price": {"amount": price}} if price else {},
+    }
+
+
+def _find_key(obj: Any, key: str) -> Any:
+    """Recursively find the first occurrence of key in a nested dict/list."""
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for v in obj.values():
+            result = _find_key(v, key)
+            if result is not None:
+                return result
+    elif isinstance(obj, list):
+        for item in obj:
+            result = _find_key(item, key)
+            if result is not None:
+                return result
+    return None
 
 
 async def place_bid(offer_id: str, amount: float, access_token: str) -> dict[str, Any]:

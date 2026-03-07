@@ -59,7 +59,7 @@ class SniperEngine:
         # 3. Fetch current offer state (fresh end time + current price)
         offer: dict = {}
         try:
-            offer = await allegro_client.get_offer(offer_id, access_token=access_token)
+            offer = await allegro_client.get_offer(offer_id, access_token=access_token, offer_url=snipe.get("allegro_offer_url"))
         except allegro_client.AllegroNotFoundError:
             await self._fail(snipe_id, "Offer not found on Allegro")
             return

@@ -53,7 +53,7 @@ async def create_snipe(payload: SnipeCreate, user: dict = Depends(_require_user)
     current_price: Optional[float] = None
     try:
         access_token = token_manager.decrypt_token(user["encrypted_access_token"])
-        offer = await allegro_client.get_offer(offer_id, access_token=access_token)
+        offer = await allegro_client.get_offer(offer_id, access_token=access_token, offer_url=payload.allegro_offer_url)
         offer_title = offer.get("name") or offer.get("title")
         offer_end_time = offer.get("endingAt") or offer.get("endTime")
         images = offer.get("images") or []
