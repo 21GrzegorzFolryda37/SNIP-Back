@@ -19,6 +19,8 @@ HOT_WINDOW_S = 600
 
 _scheduler: AsyncIOScheduler | None = None
 _in_progress: set[str] = set()  # snipe IDs currently being executed
+_hydration_cooldown: dict[str, float] = {}  # snipe_id → timestamp of last failed hydration
+_HYDRATION_COOLDOWN_S = 300  # retry hydration at most once every 5 minutes
 _engine = SniperEngine()
 
 
@@ -52,7 +54,10 @@ async def _poll_snipes() -> None:
 
         end_time_str = snipe.get("offer_end_time")
         if not end_time_str:
-            # Try to hydrate offer_end_time from Allegro API
+            # Try to hydrate offer_end_time from Allegro API (with cooldown to avoid hammering)
+            last_attempt = _hydration_cooldown.get(snipe_id, 0)
+            if now - last_attempt < _HYDRATION_COOLDOWN_S:
+                continue  # skip until cooldown expires
             try:
                 user_data = snipe.get("users") or {}
                 encrypted_token = user_data.get("encrypted_access_token")
@@ -66,13 +71,17 @@ async def _poll_snipes() -> None:
                         or offer.get("endTime")
                     )
                     if end_time_str:
+                        _hydration_cooldown.pop(snipe_id, None)
                         await supabase_client.update_snipe_status(
                             snipe_id, SnipeStatus.waiting,
                             offer_end_time=end_time_str,
                             offer_title=offer.get("name") or offer.get("title"),
                         )
                         logger.info("[snipe:%s] Hydrated offer_end_time=%s", snipe_id, end_time_str)
+                    else:
+                        _hydration_cooldown[snipe_id] = now
             except Exception as exc:
+                _hydration_cooldown[snipe_id] = now
                 logger.warning("[snipe:%s] Failed to hydrate offer_end_time: %s", snipe_id, exc)
             if not end_time_str:
                 continue
