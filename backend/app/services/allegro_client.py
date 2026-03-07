@@ -151,12 +151,17 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
 
     try:
         if settings.scraper_api_key:
-            proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': target_url, 'render': 'true'})}"
+            # Use Polish residential proxy (country_code=pl) — Allegro may geo-restrict
+            # No render=true: Next.js SSR includes __NEXT_DATA__ in initial HTML
+            proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': target_url, 'country_code': 'pl'})}"
             session = get_session()
             async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                 status = resp.status
+                body = await resp.text()
                 if status == 200:
-                    html = await resp.text()
+                    html = body
+                else:
+                    logger.warning("_scrape_offer_page: ScraperAPI → %d: %s", status, body[:300])
         else:
             from curl_cffi.requests import AsyncSession
             async with AsyncSession(impersonate="chrome120") as s:
@@ -177,7 +182,6 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
         _scraping_blocked = True
         return None
     if status != 200:
-        logger.warning("_scrape_offer_page: %s → %d", target_url, status)
         return None
 
     ending_at: Optional[str] = None
