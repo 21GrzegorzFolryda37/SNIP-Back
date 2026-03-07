@@ -208,7 +208,6 @@ function SnipesTab() {
   const [userId, setUserId] = useState('')
   const [url, setUrl] = useState('')
   const [maxBid, setMaxBid] = useState('')
-  const [endTime, setEndTime] = useState('')
   const [snipes, setSnipes] = useState<Snipe[]>([])
   const [loading, setLoading] = useState(false)
   const [addLoading, setAddLoading] = useState(false)
@@ -261,7 +260,7 @@ function SnipesTab() {
       const res = await fetch(`${API}/snipes?token=${encodeURIComponent(token)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allegro_offer_url: url.trim(), max_bid_amount: parseFloat(maxBid), ...(endTime ? { offer_end_time: new Date(endTime).toISOString() } : {}) }),
+        body: JSON.stringify({ allegro_offer_url: url.trim(), max_bid_amount: parseFloat(maxBid) }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -273,7 +272,6 @@ function SnipesTab() {
       setSuccess(`Snipe dodany!`)
       setUrl('')
       setMaxBid('')
-      setEndTime('')
       fetchSnipes()
     } catch (e) {
       setError(String(e))
@@ -341,13 +339,6 @@ function SnipesTab() {
           placeholder="https://allegro.pl/oferta/nazwa-12345678"
           value={url}
           onChange={e => setUrl(e.target.value)}
-          required
-        />
-        <input
-          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-orange-500"
-          type="datetime-local"
-          value={endTime}
-          onChange={e => setEndTime(e.target.value)}
           required
         />
         <div className="flex gap-3 items-center">

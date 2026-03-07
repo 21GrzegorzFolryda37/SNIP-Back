@@ -39,7 +39,6 @@ class UserResponse(BaseModel):
 class SnipeCreate(BaseModel):
     allegro_offer_url: str
     max_bid_amount: float
-    offer_end_time: Optional[datetime] = None
 
     @field_validator("allegro_offer_url")
     @classmethod

@@ -58,7 +58,7 @@ async def _poll_snipes() -> None:
                 encrypted_token = user_data.get("encrypted_access_token")
                 if encrypted_token:
                     access_token = token_manager.decrypt_token(encrypted_token)
-                    offer = await allegro_client.get_offer(snipe["allegro_offer_id"], offer_url=snipe.get("allegro_offer_url"))
+                    offer = await allegro_client.get_offer(snipe["allegro_offer_id"], access_token=access_token)
                     end_time_str = (
                         offer.get("publication", {}).get("endingAt")
                         or offer.get("endingAt")

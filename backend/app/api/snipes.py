@@ -48,9 +48,30 @@ async def create_snipe(payload: SnipeCreate, user: dict = Depends(_require_user)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     offer_title: Optional[str] = None
-    offer_end_time: Optional[str] = payload.offer_end_time.isoformat() if payload.offer_end_time else None
+    offer_end_time: Optional[str] = None
     offer_image_url: Optional[str] = None
     current_price: Optional[float] = None
+    try:
+        access_token = token_manager.decrypt_token(user["encrypted_access_token"])
+        offer = await allegro_client.get_offer(offer_id, access_token=access_token)
+        offer_title = offer.get("name") or offer.get("title")
+        offer_end_time = offer.get("endingAt") or offer.get("endTime")
+        images = offer.get("images") or []
+        if images:
+            offer_image_url = images[0].get("url")
+        try:
+            price_raw = (
+                offer.get("sellingMode", {}).get("price", {}).get("amount")
+                or offer.get("price", {}).get("amount")
+            )
+            if price_raw is not None:
+                current_price = float(price_raw)
+        except (TypeError, ValueError):
+            pass
+    except allegro_client.AllegroNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Allegro offer {offer_id} not found")
+    except Exception as exc:
+        logger.warning("Failed to fetch offer details for %s: %s", offer_id, exc)
 
     db_snipe = await supabase_client.create_snipe(
         user_id=user["id"],
