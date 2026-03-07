@@ -153,7 +153,7 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
         if settings.scraper_api_key:
             proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': target_url, 'render': 'true'})}"
             session = get_session()
-            async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                 status = resp.status
                 if status == 200:
                     html = await resp.text()
