@@ -19,6 +19,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 ALLEGRO_SCOPES = " ".join([
     "allegro:api:bids",
+    "allegro:api:offers:read",
     "allegro:api:sale:offers:read",
     "allegro:api:profile:read",
     "allegro:api:orders:read",
@@ -139,7 +140,7 @@ async def callback(
     session_token = _generate_session_token(allegro_user_id)
     redirect_url = (
         f"{settings.frontend_url}/callback"
-        f"?token={quote(session_token)}&login={quote(allegro_login)}"
+        f"?token={quote(session_token)}&login={quote(allegro_login)}&user_id={quote(allegro_user_id)}"
     )
     return RedirectResponse(url=redirect_url)
 
