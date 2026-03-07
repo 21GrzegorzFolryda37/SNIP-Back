@@ -205,6 +205,7 @@ function AuthTab() {
 function SnipesTab() {
   const [token, setToken] = useState('')
   const [userLogin, setUserLogin] = useState('')
+  const [userId, setUserId] = useState('')
   const [url, setUrl] = useState('')
   const [maxBid, setMaxBid] = useState('')
   const [snipes, setSnipes] = useState<Snipe[]>([])
@@ -216,8 +217,19 @@ function SnipesTab() {
   useEffect(() => {
     const t = localStorage.getItem('lastbid_token') ?? ''
     const l = localStorage.getItem('lastbid_login') ?? ''
+    let u = localStorage.getItem('lastbid_user_id') ?? ''
+    // Token format: {user_id}.{timestamp}.{signature} — extract user_id if not cached
+    if (!u && t) {
+      const idx2 = t.lastIndexOf('.')
+      const idx1 = t.lastIndexOf('.', idx2 - 1)
+      if (idx1 > 0) {
+        u = t.substring(0, idx1)
+        localStorage.setItem('lastbid_user_id', u)
+      }
+    }
     setToken(t)
     setUserLogin(l)
+    setUserId(u)
   }, [])
 
   const fetchSnipes = useCallback(async () => {
@@ -300,9 +312,16 @@ function SnipesTab() {
   return (
     <div className="space-y-5">
       <div className="bg-gray-900 rounded-lg p-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500" />
-          <span className="text-sm text-gray-300">Zalogowany jako <strong className="text-white">{userLogin}</strong></span>
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green-500" />
+            <span className="text-sm text-gray-300">Zalogowany jako <strong className="text-white">{userLogin}</strong></span>
+          </div>
+          {userId && (
+            <span className="text-xs text-gray-500 pl-4">
+              User ID: <code className="text-gray-400">{userId}</code>
+            </span>
+          )}
         </div>
         <button
           onClick={fetchSnipes}

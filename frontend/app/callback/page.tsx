@@ -8,12 +8,22 @@ function CallbackContent() {
   const params = useSearchParams()
   const token = params.get('token')
   const login = params.get('login')
+  const userId = params.get('user_id')
   const error = params.get('error') ?? params.get('detail')
+
+  // Prefer explicit user_id param; fall back to extracting from token
+  let displayUserId = userId
+  if (!displayUserId && token) {
+    const idx2 = token.lastIndexOf('.')
+    const idx1 = token.lastIndexOf('.', idx2 - 1)
+    if (idx1 > 0) displayUserId = token.substring(0, idx1)
+  }
 
   useEffect(() => {
     if (token) localStorage.setItem('lastbid_token', token)
     if (login) localStorage.setItem('lastbid_login', login)
-  }, [token, login])
+    if (displayUserId) localStorage.setItem('lastbid_user_id', displayUserId)
+  }, [token, login, displayUserId])
 
   if (error) {
     return (
@@ -34,6 +44,12 @@ function CallbackContent() {
         <p className="text-sm">
           Zalogowany jako: <strong className="text-white">{login}</strong>
         </p>
+      )}
+      {displayUserId && (
+        <div className="bg-black/30 rounded px-3 py-2">
+          <p className="text-xs text-gray-500 mb-1">Allegro User ID</p>
+          <code className="text-green-400 text-sm break-all">{displayUserId}</code>
+        </div>
       )}
       <p className="text-sm text-gray-400">
         Sesja zapisana — możesz teraz korzystać z zakładki Snipes.
