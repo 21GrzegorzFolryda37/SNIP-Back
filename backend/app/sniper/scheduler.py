@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.services import supabase_client
+from app.services import allegro_client, supabase_client, token_manager
+from app.models.schemas import SnipeStatus
 from app.sniper.engine import SniperEngine
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,25 @@ async def _poll_snipes() -> None:
 
         end_time_str = snipe.get("offer_end_time")
         if not end_time_str:
-            continue
+            # Try to hydrate offer_end_time from Allegro API
+            try:
+                user_data = snipe.get("users") or {}
+                encrypted_token = user_data.get("encrypted_access_token")
+                if encrypted_token:
+                    access_token = token_manager.decrypt_token(encrypted_token)
+                    offer = await allegro_client.get_offer(snipe["allegro_offer_id"], access_token=access_token)
+                    end_time_str = offer.get("endingAt") or offer.get("endTime")
+                    if end_time_str:
+                        await supabase_client.update_snipe_status(
+                            snipe_id, SnipeStatus.waiting,
+                            offer_end_time=end_time_str,
+                            offer_title=offer.get("name") or offer.get("title"),
+                        )
+                        logger.info("[snipe:%s] Hydrated offer_end_time=%s", snipe_id, end_time_str)
+            except Exception as exc:
+                logger.warning("[snipe:%s] Failed to hydrate offer_end_time: %s", snipe_id, exc)
+            if not end_time_str:
+                continue
 
         try:
             end_time = datetime.fromisoformat(
