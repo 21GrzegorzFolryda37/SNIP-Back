@@ -70,8 +70,8 @@ async def create_snipe(payload: SnipeCreate, user: dict = Depends(_require_user)
             pass
     except allegro_client.AllegroNotFoundError:
         raise HTTPException(status_code=404, detail=f"Allegro offer {offer_id} not found")
-    except Exception as exc:
-        logger.warning("Failed to fetch offer details for %s: %s", offer_id, exc)
+    except (allegro_client.AllegroAccessDeniedError, Exception) as exc:
+        logger.warning("Failed to fetch offer details for %s (will create snipe anyway): %s", offer_id, exc)
 
     db_snipe = await supabase_client.create_snipe(
         user_id=user["id"],

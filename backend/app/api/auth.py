@@ -20,6 +20,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 ALLEGRO_SCOPES = " ".join([
     "allegro:api:bids",
+    "allegro:api:bidding",
     "allegro:api:sale:offers:read",
     "allegro:api:profile:read",
     "allegro:api:orders:read",

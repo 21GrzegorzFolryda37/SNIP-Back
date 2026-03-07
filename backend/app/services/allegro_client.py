@@ -57,12 +57,20 @@ async def _request(
                     continue
                 if resp.status == 401:
                     raise AllegroUnauthorizedError("Access token expired or invalid")
+                if resp.status == 403:
+                    body = await resp.text()
+                    logger.warning("Allegro API %s %s → 403: %s", method, url, body[:500])
+                    raise AllegroAccessDeniedError(f"Access denied: {body[:200]}")
+                if resp.status == 404:
+                    body = await resp.text()
+                    logger.warning("Allegro API %s %s → 404: %s", method, url, body[:500])
+                    raise AllegroNotFoundError(body[:500])
                 if resp.status >= 400:
                     body = await resp.text()
                     logger.warning("Allegro API %s %s → %d: %s", method, url, resp.status, body[:500])
                 resp.raise_for_status()
                 return await resp.json()
-        except AllegroUnauthorizedError:
+        except (AllegroUnauthorizedError, AllegroAccessDeniedError, AllegroNotFoundError):
             raise
         except aiohttp.ClientError as exc:
             last_exc = exc
@@ -81,6 +89,8 @@ async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url
         result = await _request("GET", f"{settings.allegro_api_url}/offers/{offer_id}", access_token=access_token)
         logger.info("GET /offers/%s keys: %s", offer_id, list(result.keys()))
         return result
+    except AllegroAccessDeniedError as e1:
+        logger.warning("GET /offers/%s access denied (marketplace approval needed), trying bidding endpoint: %s", offer_id, e1)
     except Exception as e1:
         logger.warning("GET /offers/%s failed: %s", offer_id, e1)
 
@@ -89,10 +99,18 @@ async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url
         result = await _request("GET", f"{settings.allegro_api_url}/bidding/offers/{offer_id}", access_token=access_token)
         logger.info("GET /bidding/offers/%s keys: %s", offer_id, list(result.keys()))
         return result
+    except AllegroNotFoundError as e2:
+        body = str(e2).lower()
+        if "unavailable" in body or "feature" in body:
+            raise AllegroAccessDeniedError(
+                f"GET /bidding/offers/{offer_id} feature unavailable (missing allegro:api:bidding scope?)"
+            ) from e2
+        raise AllegroNotFoundError(f"Offer {offer_id} not found") from e2
+    except AllegroAccessDeniedError:
+        raise
     except Exception as e2:
         logger.warning("GET /bidding/offers/%s failed: %s", offer_id, e2)
-
-    raise AllegroNotFoundError(f"Could not fetch offer {offer_id} from any endpoint")
+        raise AllegroAccessDeniedError(f"Could not fetch offer {offer_id} from any endpoint") from e2
 
 
 async def place_bid(offer_id: str, amount: float, access_token: str) -> dict[str, Any]:
@@ -160,4 +178,8 @@ class AllegroUnauthorizedError(Exception):
 
 
 class AllegroNotFoundError(Exception):
+    pass
+
+
+class AllegroAccessDeniedError(Exception):
     pass

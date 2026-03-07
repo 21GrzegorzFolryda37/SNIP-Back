@@ -57,19 +57,22 @@ class SniperEngine:
                 logger.warning("[snipe:%s] Token refresh check failed: %s", snipe_id, exc)
 
         # 3. Fetch current offer state (fresh end time + current price)
+        offer: dict = {}
         try:
             offer = await allegro_client.get_offer(offer_id, access_token=access_token)
         except allegro_client.AllegroNotFoundError:
             await self._fail(snipe_id, "Offer not found on Allegro")
             return
+        except allegro_client.AllegroAccessDeniedError as exc:
+            logger.warning("[snipe:%s] get_offer access denied, falling back to stored end_time: %s", snipe_id, exc)
         except Exception as exc:
-            await self._fail(snipe_id, f"Failed to fetch offer: {exc}")
-            return
+            logger.warning("[snipe:%s] get_offer failed, falling back to stored end_time: %s", snipe_id, exc)
 
         end_time_str = (
             offer.get("publication", {}).get("endingAt")
             or offer.get("endingAt")
             or offer.get("endTime")
+            or snipe.get("offer_end_time")
         )
         if not end_time_str:
             await self._fail(snipe_id, "Could not determine offer end time")
