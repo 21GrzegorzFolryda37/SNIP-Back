@@ -13,6 +13,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _session: Optional[aiohttp.ClientSession] = None
+_offers_listing_blocked: bool = False  # cached: True once we know /offers/listing returns 403
 
 
 def get_session() -> aiohttp.ClientSession:
@@ -85,23 +86,26 @@ async def _request(
 async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url: Optional[str] = None) -> dict[str, Any]:
     """Fetch offer details — try API endpoints, then fall back to page scraping."""
     # Try 1: GET /offers/listing?offer.id={id}  (public marketplace search)
-    try:
-        result = await _request(
-            "GET", f"{settings.allegro_api_url}/offers/listing",
-            access_token=access_token,
-            params={"offer.id": offer_id, "limit": 1},
-        )
-        items = result.get("items", {}).get("regular", [])
-        if items:
-            logger.info("GET /offers/listing offer.id=%s → found, keys: %s", offer_id, list(items[0].keys()))
-            return items[0]
-        logger.warning("GET /offers/listing offer.id=%s → 200 but no items", offer_id)
-    except AllegroAccessDeniedError as e1:
-        logger.warning("GET /offers/listing access denied (no marketplace approval): %s", e1)
-    except AllegroNotFoundError:
-        raise
-    except Exception as e1:
-        logger.warning("GET /offers/listing failed: %s", e1)
+    global _offers_listing_blocked
+    if not _offers_listing_blocked:
+        try:
+            result = await _request(
+                "GET", f"{settings.allegro_api_url}/offers/listing",
+                access_token=access_token,
+                params={"offer.id": offer_id, "limit": 1},
+            )
+            items = result.get("items", {}).get("regular", [])
+            if items:
+                logger.info("GET /offers/listing offer.id=%s → found, keys: %s", offer_id, list(items[0].keys()))
+                return items[0]
+            logger.warning("GET /offers/listing offer.id=%s → 200 but no items", offer_id)
+        except AllegroAccessDeniedError as e1:
+            logger.warning("GET /offers/listing access denied — disabling for this session: %s", e1)
+            _offers_listing_blocked = True
+        except AllegroNotFoundError:
+            raise
+        except Exception as e1:
+            logger.warning("GET /offers/listing failed: %s", e1)
 
     # Try 2: GET /bidding/offers/{id}
     try:
