@@ -7,6 +7,7 @@ import hmac
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from urllib.parse import urlencode, quote
 
 from fastapi import APIRouter, HTTPException, Query
@@ -101,10 +102,19 @@ async def login():
 
 @router.get("/callback")
 async def callback(
-    code: str = Query(...),
-    state: str = Query(...),
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    error_description: Optional[str] = Query(None),
 ):
     """Handle Allegro OAuth2 callback, exchange code for tokens, store encrypted."""
+    if error:
+        msg = error_description or error
+        return RedirectResponse(url=f"{settings.frontend_url}/callback?error={quote(msg)}")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state parameter")
+
     if not _verify_state(state):
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
