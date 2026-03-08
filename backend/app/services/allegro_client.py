@@ -235,6 +235,36 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
                 logger.info("_scrape_offer_page: ISO date fallback=%r", ending_at)
                 break
 
+    # Strategy 5: Polish date format visible in page text
+    # e.g. "(niedz., 8 mar 2026, 11:36:47)" → ISO UTC
+    if not ending_at:
+        import datetime as _dt
+        from zoneinfo import ZoneInfo
+        _PL_MONTHS = {
+            'sty': 1, 'lut': 2, 'mar': 3, 'kwi': 4, 'maj': 5, 'cze': 6,
+            'lip': 7, 'sie': 8, 'wrz': 9, 'paź': 10, 'lis': 11, 'gru': 12,
+        }
+        _pl_pat = _re.compile(
+            r'\((?:pon\.|wt\.|śr\.|czw\.|pt\.|sob\.|niedz\.),?\s*'
+            r'(\d{1,2})\s+(sty|lut|mar|kwi|maj|cze|lip|sie|wrz|pa[zź]|lis|gru)\s+'
+            r'(\d{4}),\s*(\d{2}:\d{2}:\d{2})\)',
+            _re.UNICODE,
+        )
+        pm = _pl_pat.search(html)
+        if pm:
+            try:
+                day, mon_str, year, time_str = pm.group(1), pm.group(2), pm.group(3), pm.group(4)
+                mon_str = mon_str.replace('pa', 'paź') if mon_str == 'paz' else mon_str
+                month = _PL_MONTHS.get(mon_str)
+                if month:
+                    h, mi, s = map(int, time_str.split(':'))
+                    warsaw = ZoneInfo("Europe/Warsaw")
+                    dt_local = _dt.datetime(int(year), month, int(day), h, mi, s, tzinfo=warsaw)
+                    ending_at = dt_local.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    logger.info("_scrape_offer_page: Polish date fallback=%r → %r", pm.group(0), ending_at)
+            except Exception as exc:
+                logger.warning("_scrape_offer_page: Polish date parse failed: %s", exc)
+
     if not title:
         m = _re.search(r'"name"\s*:\s*"([^"\\]{3,})"', html)
         title = m.group(1) if m else None
