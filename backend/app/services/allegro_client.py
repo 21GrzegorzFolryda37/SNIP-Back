@@ -187,7 +187,7 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
     title: Optional[str] = None
     price: Optional[str] = None
 
-    logger.info("_scrape_offer_page: html len=%d, has __NEXT_DATA__: %s", len(html), '__NEXT_DATA__' in html)
+    logger.info("_scrape_offer_page: html len=%d, has __NEXT_DATA__: %s, first_500=%r", len(html), '__NEXT_DATA__' in html, html[:500])
 
     # Strategy 1: __NEXT_DATA__ JSON block
     nd_match = _re.search(r'<script id="__NEXT_DATA__"[^>]*>([\s\S]+?)</script>', html)
