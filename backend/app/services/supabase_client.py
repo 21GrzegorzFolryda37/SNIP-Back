@@ -126,7 +126,7 @@ async def get_active_snipes() -> list[dict[str, Any]]:
     db = get_client()
     result = (
         db.table("snipes")
-        .select("*, users(id, encrypted_access_token, encrypted_refresh_token, token_expires_at)")
+        .select("*, users(id, allegro_login, encrypted_access_token, encrypted_refresh_token, token_expires_at)")
         .in_("status", [SnipeStatus.waiting.value, SnipeStatus.active.value])
         .execute()
     )

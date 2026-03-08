@@ -22,6 +22,7 @@ ALLEGRO_SCOPES = " ".join([
     "allegro:api:bids",
     "allegro:api:profile:read",
     "allegro:api:orders:read",
+    "allegro:api:offers:read",
 ])
 
 _STATE_TTL = 600       # 10 minut
