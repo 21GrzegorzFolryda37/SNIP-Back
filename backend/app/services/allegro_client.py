@@ -172,29 +172,37 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
     status = 0
     html = ""
 
+    scraperapi_ok = False
     try:
         if settings.scraper_api_key:
-            # premium=true required for Allegro.pl (protected domain per ScraperAPI)
-            proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': target_url, 'country_code': 'pl', 'ultra_premium': 'true'})}"
+            # Try ScraperAPI without premium first (basic plan); render=true helps with JS-heavy pages
+            proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': target_url, 'country_code': 'pl', 'render': 'true'})}"
             session = get_session()
             async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                 status = resp.status
                 body = await resp.text()
                 if status == 200:
                     html = body
+                    scraperapi_ok = True
                 else:
                     logger.warning("_scrape_offer_page: ScraperAPI → %d: %s", status, body[:300])
-        else:
+    except Exception as exc:
+        logger.warning("_scrape_offer_page: ScraperAPI exception: %s", exc)
+
+    # Fallback: curl_cffi Chrome TLS impersonation (works if Cloudflare doesn't block DC IPs)
+    if not scraperapi_ok:
+        try:
             from curl_cffi.requests import AsyncSession
             async with AsyncSession(impersonate="chrome120") as s:
                 resp = await s.get(target_url, timeout=15, allow_redirects=True)
             status = resp.status_code
-            html = resp.text if status == 200 else ""
-    except AllegroNotFoundError:
-        raise
-    except Exception as exc:
-        logger.warning("_scrape_offer_page: fetch failed for %s: %s", target_url, exc)
-        return None
+            if status == 200:
+                html = resp.text
+                logger.info("_scrape_offer_page: curl_cffi succeeded for %s", target_url)
+            else:
+                logger.warning("_scrape_offer_page: curl_cffi → %d for %s", status, target_url)
+        except Exception as exc:
+            logger.warning("_scrape_offer_page: curl_cffi failed for %s: %s", target_url, exc)
 
     if status == 404:
         raise AllegroNotFoundError(f"Offer {offer_id} not found (scrape 404)")
