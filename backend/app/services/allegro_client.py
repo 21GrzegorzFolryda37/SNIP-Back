@@ -302,9 +302,9 @@ def _find_key(obj: Any, key: str) -> Any:
 
 async def place_bid(offer_id: str, amount: float, access_token: str) -> dict[str, Any]:
     """Place a bid on an auction offer."""
-    url = f"{settings.allegro_api_url}/bidding/offers/{offer_id}/bids"
+    url = f"{settings.allegro_api_url}/bidding/offers/{offer_id}/bid"
     payload = {"amount": {"amount": str(amount), "currency": "PLN"}}
-    return await _request("POST", url, access_token=access_token, json=payload)
+    return await _request("PUT", url, access_token=access_token, json=payload)
 
 
 async def get_user_profile(access_token: str) -> dict[str, Any]:
