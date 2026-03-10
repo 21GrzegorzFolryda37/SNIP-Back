@@ -144,23 +144,7 @@ async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url
         except Exception as e1:
             logger.warning("GET /offers/listing failed: %s", e1)
 
-    # Try 2: GET /sale/offers/{id} (requires allegro:api:sale:offers:read scope)
-    if access_token:
-        try:
-            result = await _request("GET", f"{settings.allegro_api_url}/sale/offers/{offer_id}", access_token=access_token)
-            logger.info("GET /sale/offers/%s keys: %s", offer_id, list(result.keys()))
-            if _has_ending(result):
-                return {**(api_result or {}), **result}
-            api_result = api_result or result
-            logger.info("GET /sale/offers/%s: no endingAt — trying next source", offer_id)
-        except AllegroNotFoundError as e2:
-            logger.warning("GET /sale/offers/%s not found: %s", offer_id, e2)
-        except AllegroAccessDeniedError:
-            logger.warning("GET /sale/offers/%s access denied, trying next source", offer_id)
-        except Exception as e2:
-            logger.warning("GET /sale/offers/%s failed: %s", offer_id, e2)
-
-    # Try 3: GET /bidding/offers/{id}
+    # Try 2: GET /bidding/offers/{id}
     try:
         result = await _request("GET", f"{settings.allegro_api_url}/bidding/offers/{offer_id}", access_token=access_token)
         logger.info("GET /bidding/offers/%s keys: %s", offer_id, list(result.keys()))
@@ -168,16 +152,16 @@ async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url
             return {**(api_result or {}), **result}
         api_result = api_result or result
         logger.info("GET /bidding/offers/%s: no endingAt — trying page scrape", offer_id)
-    except AllegroNotFoundError as e3:
-        body = str(e3).lower()
+    except AllegroNotFoundError as e2:
+        body = str(e2).lower()
         if "unavailable" in body or "feature" in body:
             logger.warning("GET /bidding/offers/%s feature unavailable, trying page scrape", offer_id)
         else:
-            raise AllegroNotFoundError(f"Offer {offer_id} not found") from e3
+            raise AllegroNotFoundError(f"Offer {offer_id} not found") from e2
     except AllegroAccessDeniedError:
         logger.warning("GET /bidding/offers/%s access denied, trying page scrape", offer_id)
-    except Exception as e3:
-        logger.warning("GET /bidding/offers/%s failed: %s — trying page scrape", offer_id, e3)
+    except Exception as e2:
+        logger.warning("GET /bidding/offers/%s failed: %s — trying page scrape", offer_id, e2)
 
     # Try 3: scrape the offer page (no API approval needed)
     logger.info("Scraping offer page for %s", offer_id)
@@ -259,7 +243,7 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
     if not html:
         try:
             if settings.scraper_api_key:
-                proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': scrape_url, 'country_code': 'pl', 'render': 'true', 'premium': 'true'})}"
+                proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': scrape_url, 'country_code': 'pl', 'ultra_premium': 'true'})}"
                 session = get_session()
                 async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                     status = resp.status
