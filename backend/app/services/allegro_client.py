@@ -46,7 +46,7 @@ async def _request(
     session = get_session()
     headers = kwargs.pop("headers", {})
     headers["Accept"] = "application/vnd.allegro.public.v1+json"
-    headers["User-Agent"] = "LastBid/1.0 (contact: kontakt@lastbid.pl)"
+    headers["User-Agent"] = "LastBid/1.0 (+https://lastbid.pl)"
     if access_token:
         headers["Authorization"] = f"Bearer {access_token}"
 
