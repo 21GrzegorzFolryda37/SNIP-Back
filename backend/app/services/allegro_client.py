@@ -239,11 +239,11 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
         except Exception as exc:
             logger.warning("_scrape_offer_page: curl_cffi failed for %s: %s", scrape_url, exc)
 
-    # Attempt 3: ScraperAPI (free plan, no premium)
+    # Attempt 3: ScraperAPI with premium=true (bypasses Cloudflare)
     if not html:
         try:
             if settings.scraper_api_key:
-                proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': scrape_url, 'country_code': 'pl'})}"
+                proxy_url = f"https://api.scraperapi.com?{urlencode({'api_key': settings.scraper_api_key, 'url': scrape_url, 'country_code': 'pl', 'premium': 'true'})}"
                 session = get_session()
                 async with session.get(proxy_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                     status = resp.status
