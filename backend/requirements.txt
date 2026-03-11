@@ -11,3 +11,5 @@ python-dotenv==1.0.1
 httpx>=0.26,<0.28
 curl_cffi>=0.7
 cloudscraper>=1.2.71
+playwright>=1.40
+playwright-stealth>=0.0.26

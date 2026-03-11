@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 _session: Optional[aiohttp.ClientSession] = None
 
+# Next.js build ID cache for /_next/data/ endpoint
+_next_build_id: Optional[str] = None
+_next_build_id_expires: float = 0.0
+_NEXT_BUILD_ID_TTL = 3600  # 1 hour
+
 
 def get_session() -> aiohttp.ClientSession:
     global _session
@@ -28,6 +33,49 @@ async def close_session() -> None:
     global _session
     if _session and not _session.closed:
         await _session.close()
+
+
+# ---------- Next.js build ID discovery ----------
+
+
+async def _get_next_build_id() -> Optional[str]:
+    """Fetch Allegro's Next.js build ID from their homepage (cached, TTL 1h).
+
+    The build ID is needed to construct /_next/data/{buildId}/oferta/{slug}.json URLs.
+    Homepage is lighter on CF protection than individual offer pages.
+    """
+    import re as _re
+    import time as _time
+
+    global _next_build_id, _next_build_id_expires
+
+    if _next_build_id and _time.time() < _next_build_id_expires:
+        return _next_build_id
+
+    try:
+        connector = aiohttp.TCPConnector(ssl=True)
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=_BROWSER_HEADERS) as s:
+            async with s.get("https://allegro.pl/", allow_redirects=True) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    # Primary: buildId field inside __NEXT_DATA__ script
+                    m = _re.search(r'"buildId"\s*:\s*"([^"]+)"', text)
+                    if not m:
+                        # Fallback: buildId embedded in /_next/static/{id}/ script src
+                        m = _re.search(r'/_next/static/([a-zA-Z0-9_-]+)/', text)
+                    if m:
+                        _next_build_id = m.group(1)
+                        _next_build_id_expires = _time.time() + _NEXT_BUILD_ID_TTL
+                        logger.info("_get_next_build_id: buildId=%s (TTL %ds)", _next_build_id, _NEXT_BUILD_ID_TTL)
+                        return _next_build_id
+                    logger.warning("_get_next_build_id: homepage 200 but buildId not found")
+                else:
+                    logger.warning("_get_next_build_id: homepage → %d", resp.status)
+    except Exception as exc:
+        logger.warning("_get_next_build_id: failed: %s", exc)
+
+    return None
 
 
 # ---------- Internal helpers ----------
@@ -143,36 +191,126 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
     """Scrape auction end time and basic details from the Allegro offer page.
 
     Attempt order:
-    1. Direct aiohttp GET with browser headers (no external deps)
-    2. curl_cffi Chrome TLS impersonation (chrome131)
-    3. ScraperAPI fallback (if SCRAPER_API_KEY configured)
+    1. /_next/data/{buildId}/oferta/{slug}.json — raw JSON pageProps, may bypass CF
+    2. m.allegro.pl mobile page — separate CF config, may be more lenient
+    3. Direct aiohttp GET with browser headers
+    4. curl_cffi Chrome TLS impersonation (chrome131)
+    5. cloudscraper
+    6. Playwright with cached cf_clearance
+    7. ScraperAPI (if SCRAPER_API_KEY configured)
     """
     import json as _json
     import re as _re
-    from urllib.parse import urlencode
+    from urllib.parse import urlencode, urlparse as _urlparse
 
-    # Always use the simple /oferta/{id} URL for scraping — less Cloudflare protection than /produkt/
+    global _next_build_id, _next_build_id_expires
+
     scrape_url = f"https://allegro.pl/oferta/{offer_id}"
     status = 0
     html = ""
 
-    # Attempt 1: direct aiohttp with browser headers
-    try:
-        connector = aiohttp.TCPConnector(ssl=True)
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=_BROWSER_HEADERS) as s:
-            async with s.get(scrape_url, allow_redirects=True) as resp:
-                status = resp.status
-                body = await resp.text()
-                if status == 200:
-                    html = body
-                    logger.info("_scrape_offer_page: direct_get → 200 for %s", scrape_url)
-                else:
-                    logger.warning("_scrape_offer_page: direct_get → %d for %s, body=%r", status, scrape_url, body[:500])
-    except Exception as exc:
-        logger.warning("_scrape_offer_page: direct_get exception: %s", exc)
+    # Attempt 1: /_next/data/ JSON endpoint — returns pageProps as pure JSON
+    build_id = await _get_next_build_id()
+    if build_id:
+        try:
+            if offer_url:
+                page_path = _urlparse(offer_url).path.rstrip("/")
+            else:
+                page_path = f"/oferta/{offer_id}"
+            next_data_url = f"https://allegro.pl/_next/data/{build_id}{page_path}.json"
+            # XHR-like headers — different from HTML navigation headers
+            nd_headers = {
+                **_BROWSER_HEADERS,
+                "Accept": "application/json, text/plain, */*",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "Referer": scrape_url,
+            }
+            nd_headers.pop("Sec-Fetch-User", None)
+            nd_headers.pop("Upgrade-Insecure-Requests", None)
+            connector = aiohttp.TCPConnector(ssl=True)
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as s:
+                async with s.get(next_data_url, headers=nd_headers, allow_redirects=True) as resp:
+                    nd_status = resp.status
+                    if nd_status == 200:
+                        data = await resp.json(content_type=None)
+                        props = data.get("pageProps", {})
+                        offer_node = props.get("offer") or props.get("item") or props.get("auction") or {}
+                        ending_at = (
+                            offer_node.get("endingAt") or offer_node.get("endingTime") or offer_node.get("endTime")
+                            or _find_key(data, "endingAt") or _find_key(data, "endingTime") or _find_key(data, "endTime")
+                        )
+                        logger.info(
+                            "_scrape_offer_page: _next_data → 200, endingAt=%r, props_keys=%s",
+                            ending_at, list(props.keys())[:10],
+                        )
+                        if ending_at:
+                            title = offer_node.get("name") or _find_key(data, "name")
+                            price_raw = _find_key(data, "amount")
+                            return {
+                                "endingAt": ending_at,
+                                "name": title,
+                                "sellingMode": {"price": {"amount": str(price_raw)}} if price_raw else {},
+                            }
+                    elif nd_status == 404:
+                        # Build ID is stale — invalidate cache so next call re-discovers it
+                        _next_build_id = None
+                        _next_build_id_expires = 0.0
+                        logger.warning("_scrape_offer_page: _next_data → 404 (stale buildId), cache cleared")
+                    else:
+                        body = await resp.text()
+                        logger.warning("_scrape_offer_page: _next_data → %d for %s, body=%r", nd_status, next_data_url, body[:300])
+        except Exception as exc:
+            logger.warning("_scrape_offer_page: _next_data exception: %s", exc)
+    else:
+        logger.info("_scrape_offer_page: buildId unavailable, skipping _next_data attempt")
 
-    # Attempt 2: curl_cffi Chrome TLS impersonation
+    # Attempt 2: m.allegro.pl mobile — may have lighter CF rules
+    if not html:
+        mobile_url = f"https://m.allegro.pl/oferta/{offer_id}"
+        mobile_headers = {
+            **_BROWSER_HEADERS,
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Mobile Safari/537.36"
+            ),
+        }
+        try:
+            connector = aiohttp.TCPConnector(ssl=True)
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=mobile_headers) as s:
+                async with s.get(mobile_url, allow_redirects=True) as resp:
+                    status = resp.status
+                    body = await resp.text()
+                    if status == 200:
+                        html = body
+                        logger.info("_scrape_offer_page: mobile → 200 for %s", mobile_url)
+                    else:
+                        logger.warning("_scrape_offer_page: mobile → %d for %s, body=%r", status, mobile_url, body[:500])
+        except Exception as exc:
+            logger.warning("_scrape_offer_page: mobile exception: %s", exc)
+
+    # Attempt 3: direct aiohttp with browser headers
+    if not html:
+        try:
+            connector = aiohttp.TCPConnector(ssl=True)
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=_BROWSER_HEADERS) as s:
+                async with s.get(scrape_url, allow_redirects=True) as resp:
+                    status = resp.status
+                    body = await resp.text()
+                    if status == 200:
+                        html = body
+                        logger.info("_scrape_offer_page: direct_get → 200 for %s", scrape_url)
+                    else:
+                        logger.warning("_scrape_offer_page: direct_get → %d for %s, body=%r", status, scrape_url, body[:500])
+        except Exception as exc:
+            logger.warning("_scrape_offer_page: direct_get exception: %s", exc)
+
+    # Attempt 4: curl_cffi Chrome TLS impersonation
     if not html:
         try:
             from curl_cffi.requests import AsyncSession
@@ -187,7 +325,7 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
         except Exception as exc:
             logger.warning("_scrape_offer_page: curl_cffi failed for %s: %s", scrape_url, exc)
 
-    # Attempt 3: cloudscraper (free library designed to bypass Cloudflare JS challenges)
+    # Attempt 5: cloudscraper
     if not html:
         try:
             import cloudscraper
@@ -204,7 +342,29 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
         except Exception as exc:
             logger.warning("_scrape_offer_page: cloudscraper failed for %s: %s", scrape_url, exc)
 
-    # Attempt 4: ScraperAPI with render=true (renders JS, bypasses Cloudflare)
+    # Attempt 6: Playwright with cached cf_clearance
+    if not html:
+        try:
+            from app.services import playwright_scraper
+            cf_cookies = await playwright_scraper.get_cached_cf_cookies()
+            if cf_cookies:
+                cookie_header = "; ".join(f"{k}={v}" for k, v in cf_cookies.items())
+                pw_headers = {**_BROWSER_HEADERS, "Cookie": cookie_header}
+                connector = aiohttp.TCPConnector(ssl=True)
+                timeout = aiohttp.ClientTimeout(total=20)
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout) as s:
+                    async with s.get(scrape_url, headers=pw_headers, allow_redirects=True) as resp:
+                        status = resp.status
+                        body = await resp.text()
+                        if status == 200:
+                            html = body
+                            logger.info("_scrape_offer_page: playwright+cf_cookies → 200 for %s", scrape_url)
+                        else:
+                            logger.warning("_scrape_offer_page: playwright+cf_cookies → %d, body=%r", status, body[:500])
+        except Exception as exc:
+            logger.warning("_scrape_offer_page: playwright attempt failed: %s", exc)
+
+    # Attempt 7: ScraperAPI with render=true (renders JS, bypasses Cloudflare)
     if not html:
         try:
             if settings.scraper_api_key:
