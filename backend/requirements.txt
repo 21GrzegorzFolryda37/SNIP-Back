@@ -10,3 +10,4 @@ ntplib==0.4.0
 python-dotenv==1.0.1
 httpx>=0.26,<0.28
 curl_cffi>=0.7
+cloudscraper>=1.2.71

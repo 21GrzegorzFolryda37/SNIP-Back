@@ -187,7 +187,24 @@ async def _scrape_offer_page(offer_id: str, offer_url: Optional[str] = None) -> 
         except Exception as exc:
             logger.warning("_scrape_offer_page: curl_cffi failed for %s: %s", scrape_url, exc)
 
-    # Attempt 3: ScraperAPI with render=true + premium=true (renders JS, bypasses Cloudflare)
+    # Attempt 3: cloudscraper (free library designed to bypass Cloudflare JS challenges)
+    if not html:
+        try:
+            import cloudscraper
+            scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False})
+            resp = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: scraper.get(scrape_url, timeout=20, allow_redirects=True)
+            )
+            status = resp.status_code
+            if status == 200:
+                html = resp.text
+                logger.info("_scrape_offer_page: cloudscraper → 200 for %s", scrape_url)
+            else:
+                logger.warning("_scrape_offer_page: cloudscraper → %d for %s, body=%r", status, scrape_url, resp.text[:500])
+        except Exception as exc:
+            logger.warning("_scrape_offer_page: cloudscraper failed for %s: %s", scrape_url, exc)
+
+    # Attempt 4: ScraperAPI with render=true (renders JS, bypasses Cloudflare)
     if not html:
         try:
             if settings.scraper_api_key:
