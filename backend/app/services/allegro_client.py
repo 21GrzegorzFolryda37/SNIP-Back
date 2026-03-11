@@ -13,9 +13,6 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _session: Optional[aiohttp.ClientSession] = None
-_offers_listing_blocked: bool = False  # cached: True once we know /offers/listing returns 403
-_app_token: Optional[str] = None
-_app_token_expires: float = 0
 
 
 def get_session() -> aiohttp.ClientSession:
@@ -83,33 +80,13 @@ async def _request(
     raise last_exc
 
 
-# ---------- App-level token (client_credentials) ----------
-
-async def _get_app_token() -> str:
-    """Return a cached app-level token via client_credentials flow."""
-    import time as _time
-    global _app_token, _app_token_expires
-    if _app_token and _time.time() < _app_token_expires - 60:
-        return _app_token
-    url = f"{settings.allegro_auth_url}/token"
-    session = get_session()
-    async with session.post(url, data={"grant_type": "client_credentials"}, auth=_client_auth()) as resp:
-        resp.raise_for_status()
-        data = await resp.json()
-    _app_token = data["access_token"]
-    _app_token_expires = _time.time() + int(data.get("expires_in", 3600))
-    logger.info("Obtained new app-level token (expires_in=%s)", data.get("expires_in"))
-    return _app_token
-
-
 # ---------- Public API ----------
 
 
 async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url: Optional[str] = None) -> dict[str, Any]:
-    """Fetch offer details — try API endpoints, then fall back to page scraping."""
-    global _offers_listing_blocked
+    """Fetch offer details — try beta API, then fall back to page scraping."""
 
-    api_result: Optional[dict] = None  # best result from API (may lack endingAt)
+    api_result: Optional[dict] = None
 
     def _has_ending(d: dict) -> bool:
         return bool(
@@ -118,55 +95,27 @@ async def get_offer(offer_id: str, access_token: Optional[str] = None, offer_url
             or _find_key(d, "endTime")
         )
 
-    # Try 1: GET /offers/listing?offer.id={id}  (public marketplace search — use app token)
-    if not _offers_listing_blocked:
-        try:
-            app_token = await _get_app_token()
-            result = await _request(
-                "GET", f"{settings.allegro_api_url}/offers/listing",
-                access_token=app_token,
-                params={"offer.id": offer_id, "limit": 1},
-            )
-            items = result.get("items", {}).get("regular", [])
-            if items:
-                logger.info("GET /offers/listing offer.id=%s → found, keys: %s", offer_id, list(items[0].keys()))
-                if _has_ending(items[0]):
-                    return items[0]
-                api_result = items[0]
-                logger.info("GET /offers/listing: no endingAt in result — trying next source")
-            else:
-                logger.warning("GET /offers/listing offer.id=%s → 200 but no items", offer_id)
-        except AllegroAccessDeniedError as e1:
-            logger.warning("GET /offers/listing access denied — disabling for this session: %s", e1)
-            _offers_listing_blocked = True
-        except AllegroNotFoundError:
-            raise
-        except Exception as e1:
-            logger.warning("GET /offers/listing failed: %s", e1)
-
-    # Try 2: GET /bidding/offers/{id} (beta endpoint — offer details incl. endingAt)
+    # Try 1: GET /bidding/offers/{id} (beta endpoint — offer details incl. endingAt)
     try:
         result = await _request("GET", f"{settings.allegro_api_url}/bidding/offers/{offer_id}",
                                 access_token=access_token,
                                 headers={"Accept": "application/vnd.allegro.beta.v1+json"})
         logger.info("GET /bidding/offers/%s keys: %s", offer_id, list(result.keys()))
         if _has_ending(result):
-            return {**(api_result or {}), **result}
-        api_result = api_result or result
+            return result
+        api_result = result
         logger.info("GET /bidding/offers/%s: no endingAt — trying page scrape", offer_id)
-    except AllegroNotFoundError as e2:
-        # 404 here means offer truly doesn't exist — but fall through to scraping to confirm
+    except AllegroNotFoundError:
         logger.warning("GET /bidding/offers/%s → 404, falling through to page scrape", offer_id)
     except AllegroAccessDeniedError:
         logger.warning("GET /bidding/offers/%s access denied, trying page scrape", offer_id)
-    except Exception as e2:
-        logger.warning("GET /bidding/offers/%s failed: %s — trying page scrape", offer_id, e2)
+    except Exception as e:
+        logger.warning("GET /bidding/offers/%s failed: %s — trying page scrape", offer_id, e)
 
-    # Try 3: scrape the offer page (no API approval needed)
+    # Try 2: scrape the offer page
     logger.info("Scraping offer page for %s", offer_id)
     scraped = await _scrape_offer_page(offer_id, offer_url)
     if scraped and scraped.get("endingAt"):
-        # Merge: api_result has name/images/price, scraped has endingAt
         return {**scraped, **(api_result or {}), "endingAt": scraped["endingAt"]}
 
     if api_result:
@@ -428,12 +377,6 @@ async def exchange_code(code: str) -> dict[str, Any]:
 
 def _client_auth() -> aiohttp.BasicAuth:
     return aiohttp.BasicAuth(settings.allegro_client_id, settings.allegro_client_secret)
-
-
-def _basic_auth() -> str:
-    import base64
-    creds = f"{settings.allegro_client_id}:{settings.allegro_client_secret}"
-    return base64.b64encode(creds.encode()).decode()
 
 
 # ---------- Exceptions ----------
