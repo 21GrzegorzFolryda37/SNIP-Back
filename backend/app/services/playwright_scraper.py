@@ -58,7 +58,16 @@ async def _launch_and_get_cookies(target_url: str) -> Optional[dict]:
                 await stealth_async(page)
 
             logger.info("playwright_scraper: navigating to %s", target_url)
-            await page.goto(target_url, wait_until="networkidle", timeout=30_000)
+            # Use "domcontentloaded" — "networkidle" times out on CF challenge pages
+            # because the challenge JS keeps sending heartbeat requests indefinitely.
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=20_000)
+            # Wait up to 12s for CF challenge JS to execute and set cf_clearance cookie
+            for _ in range(12):
+                cookies_now = await ctx.cookies()
+                if any(c["name"] == "cf_clearance" for c in cookies_now):
+                    logger.info("playwright_scraper: cf_clearance cookie appeared after JS challenge")
+                    break
+                await asyncio.sleep(1)
 
             cookies = await ctx.cookies()
             await browser.close()
